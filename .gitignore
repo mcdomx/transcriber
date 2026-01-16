@@ -11,6 +11,10 @@ venv/
 
 # Jupyter
 .ipynb_checkpoints/
+*.ipynb
+
+# Lock files
+*.lock
 
 # Audio files (large)
 *.m4a
