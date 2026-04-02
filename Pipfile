@@ -7,6 +7,10 @@ name = "pypi"
 jupyterlab = "*"
 openai-whisper = "*"
 argparse = "*"
+"pyannote.audio" = ">=3.1"
+torch = ">=2.0"
+python-dotenv = "*"
+huggingface_hub = ">=0.20,<1.0"
 
 [dev-packages]
 
