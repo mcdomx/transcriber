@@ -11,6 +11,10 @@ argparse = "*"
 torch = ">=2.0"
 python-dotenv = "*"
 huggingface_hub = ">=0.20,<1.0"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+python-multipart = "*"
+aiofiles = "*"
 
 [dev-packages]
 

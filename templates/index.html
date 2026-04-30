@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Transcriber — Finance Next</title>
+  <style>
+    /* ── Variables ── */
+    :root {
+      --blue:       #34749C;
+      --blue-dark:  #2A5D7D;
+      --text:       #323232;
+      --white:      #FFFFFF;
+      --bg:         #F5F5F5;
+      --red:        #B94A48;
+      --green:      #3A7D5C;
+      --orange:     #CF8A35;
+      --border:     #D0D8DE;
+      --radius:     6px;
+      --shadow:     0 2px 8px rgba(0,0,0,0.10);
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--blue-dark);
+      padding: 12px 28px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    header img { height: 44px; }
+    header h1 {
+      color: var(--white);
+      font-size: 1.25rem;
+      font-weight: 600;
+      flex: 1;
+    }
+    #settingsBtn {
+      background: transparent;
+      border: 1.5px solid rgba(255,255,255,0.5);
+      border-radius: var(--radius);
+      color: var(--white);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #settingsBtn:hover { background: rgba(255,255,255,0.12); border-color: var(--white); }
+    #settingsBtn svg { width: 16px; height: 16px; fill: var(--white); }
+
+    /* ── Main layout ── */
+    main {
+      flex: 1;
+      max-width: 780px;
+      width: 100%;
+      margin: 36px auto;
+      padding: 0 20px 60px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--white);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px 28px;
+    }
+
+    /* ── Drop zone ── */
+    #dropZone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      color: #6B7B8D;
+      font-size: 0.95rem;
+      user-select: none;
+    }
+    #dropZone:hover, #dropZone.dragover {
+      border-color: var(--blue);
+      background: rgba(52,116,156,0.05);
+      color: var(--blue);
+    }
+    #dropZone.has-file {
+      border-color: var(--green);
+      color: var(--green);
+      background: rgba(58,125,92,0.04);
+    }
+    #dropZone svg { width: 36px; height: 36px; margin-bottom: 10px; display: block; margin-inline: auto; }
+    #dropZoneLabel { font-weight: 500; font-size: 1rem; margin-top: 4px; }
+    #dropZoneHint { font-size: 0.8rem; margin-top: 4px; opacity: 0.75; }
+
+    /* ── Options grid ── */
+    .options-grid {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 16px 24px;
+      align-items: end;
+    }
+    .option-group { display: flex; flex-direction: column; gap: 5px; }
+    .option-group label { font-size: 0.8rem; font-weight: 600; color: #5A6A78; text-transform: uppercase; letter-spacing: 0.04em; }
+    select, input[type="text"] {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      font-size: 0.95rem;
+      color: var(--text);
+      background: var(--white);
+      width: 100%;
+      transition: border-color 0.15s;
+    }
+    select:focus, input[type="text"]:focus { outline: none; border-color: var(--blue); }
+
+    /* Toggle switch */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 2px;
+    }
+    .toggle-row span { font-size: 0.95rem; }
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: var(--border);
+      border-radius: 22px;
+      transition: background 0.2s;
+    }
+    .slider::before {
+      content: "";
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; bottom: 3px;
+      background: var(--white);
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .switch input:checked + .slider { background: var(--blue); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+
+    /* ── Transcribe button ── */
+    #transcribeBtn {
+      background: var(--blue);
+      color: var(--white);
+      border: none;
+      border-radius: var(--radius);
+      padding: 11px 28px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      align-self: flex-start;
+    }
+    #transcribeBtn:hover:not(:disabled) { background: var(--blue-dark); }
+    #transcribeBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ── Progress ── */
+    #progressSection { display: flex; flex-direction: column; gap: 10px; }
+    .progress-track {
+      height: 10px;
+      background: #E0E8EE;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    #progressFill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--blue), var(--blue-dark));
+      border-radius: 99px;
+      transition: width 0.4s ease;
+    }
+    #progressMsg { font-size: 0.9rem; color: #5A6A78; min-height: 1.2em; }
+
+    /* ── Result ── */
+    #resultSection { display: flex; flex-direction: column; gap: 12px; }
+    #resultSection h2 { font-size: 1rem; font-weight: 600; color: var(--blue-dark); }
+    #resultText {
+      width: 100%;
+      min-height: 200px;
+      resize: vertical;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    .file-paths { display: flex; flex-direction: column; gap: 4px; }
+    .file-path-label {
+      font-size: 0.78rem;
+      color: var(--green);
+      font-family: ui-monospace, monospace;
+      word-break: break-all;
+    }
+    .file-path-label::before { content: "✓ "; }
+
+    /* ── Error ── */
+    #errorSection { display: flex; flex-direction: column; gap: 8px; }
+    #errorSection h2 { font-size: 1rem; font-weight: 600; color: var(--red); }
+    #errorMsg {
+      font-size: 0.9rem;
+      color: var(--red);
+      background: rgba(185,74,72,0.06);
+      border: 1px solid rgba(185,74,72,0.25);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    /* ── Hidden utility ── */
+    .hidden { display: none !important; }
+
+    /* ── Modal overlay ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-box {
+      background: var(--white);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+      padding: 28px 32px;
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .modal-box h2 { font-size: 1.1rem; font-weight: 700; color: var(--blue-dark); }
+    .modal-field { display: flex; flex-direction: column; gap: 5px; }
+    .modal-field label { font-size: 0.8rem; font-weight: 600; color: #5A6A78; text-transform: uppercase; letter-spacing: 0.04em; }
+    .modal-field .hint { font-size: 0.78rem; color: #8A9BAA; margin-top: 2px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+    .btn-secondary {
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 8px 18px;
+      transition: background 0.15s;
+    }
+    .btn-secondary:hover { background: #E4EBF0; }
+    .btn-primary {
+      background: var(--blue);
+      border: none;
+      border-radius: var(--radius);
+      color: var(--white);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 8px 18px;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--blue-dark); }
+    input[type="password"] {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      font-size: 0.95rem;
+      color: var(--text);
+      width: 100%;
+      transition: border-color 0.15s;
+    }
+    input[type="password"]:focus { outline: none; border-color: var(--blue); }
+
+    /* ── Section divider ── */
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #8A9BAA;
+      margin-bottom: 12px;
+    }
+
+    /* ── Folder picker ── */
+    .folder-picker {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .folder-picker input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      color: #5A6A78;
+      cursor: default;
+    }
+    .folder-picker input[type="text"]:focus { border-color: var(--border); }
+    .browse-btn {
+      flex-shrink: 0;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.88rem;
+      padding: 7px 14px;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .browse-btn:hover { background: #E4EBF0; border-color: var(--blue); }
+
+    /* ── Format checkboxes ── */
+    .format-checks {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      padding-bottom: 2px;
+    }
+    .format-check {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      user-select: none;
+    }
+    .format-check input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ───────────────────── Header ───────────────────── -->
+<header>
+  <img src="/static/logo.png" alt="Finance Next">
+  <h1>Audio Transcriber</h1>
+  <button id="settingsBtn" title="Settings">
+    <svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.07-1.13a7.07 7.07 0 0 0 .06-.87c0-.3-.02-.6-.06-.87l1.88-1.47a.45.45 0 0 0 .1-.57l-1.78-3.08a.45.45 0 0 0-.55-.2l-2.22.89a6.53 6.53 0 0 0-1.5-.87l-.33-2.36A.44.44 0 0 0 12.22 2H7.78a.44.44 0 0 0-.44.38l-.34 2.36a6.53 6.53 0 0 0-1.49.87l-2.22-.9a.44.44 0 0 0-.55.2L1 7.99a.44.44 0 0 0 .11.57l1.88 1.47a6.6 6.6 0 0 0 0 1.74L1.11 13.24a.44.44 0 0 0-.1.57l1.78 3.08c.11.2.35.27.55.2l2.22-.9c.47.34.97.62 1.5.87l.33 2.36c.05.23.26.4.5.4h4.44c.24 0 .45-.17.5-.4l.33-2.36a6.53 6.53 0 0 0 1.5-.87l2.21.9c.2.08.44.01.56-.2l1.78-3.08a.44.44 0 0 0-.11-.57l-1.88-1.47z"/>
+    </svg>
+    Settings
+  </button>
+</header>
+
+<!-- ───────────────────── Settings Modal ───────────────────── -->
+<div id="settingsModal" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h2>Settings</h2>
+
+    <div class="modal-field">
+      <label>HuggingFace Token</label>
+      <input type="password" id="settingsToken" placeholder="Enter new token to update">
+      <span class="hint" id="settingsTokenHint">Loading…</span>
+    </div>
+
+    <div class="modal-field">
+      <label>Default Output Directory</label>
+      <div class="folder-picker">
+        <input type="text" id="settingsOutputDir" placeholder="/path/to/output">
+        <button class="browse-btn" id="browseSettingsBtn">📁 Browse…</button>
+      </div>
+      <span class="hint">Leave blank to save alongside the uploaded file.</span>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" id="settingsCancel">Cancel</button>
+      <button class="btn-primary" id="settingsSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────────────── Main content ───────────────────── -->
+<main>
+
+  <!-- Upload -->
+  <div class="card">
+    <p class="section-title">Audio File</p>
+    <div id="dropZone" style="margin-top:4px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 16V4m0 0L8 8m4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M3 16v1a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-1" stroke-linecap="round"/>
+      </svg>
+      <div id="dropZoneLabel">Drop audio file here or click to browse</div>
+      <div id="dropZoneHint">Supported: mp3, mp4, m4a, wav, webm, mpeg, mpga</div>
+    </div>
+  </div>
+
+  <!-- Options -->
+  <div class="card">
+    <p class="section-title">Options</p>
+    <div class="options-grid">
+      <div class="option-group">
+        <label for="quality">Model Quality</label>
+        <select id="quality">
+          <option value="1">1 – Tiny (fastest)</option>
+          <option value="2" selected>2 – Base</option>
+          <option value="3">3 – Small</option>
+          <option value="4">4 – Medium</option>
+          <option value="5">5 – Large (best)</option>
+        </select>
+      </div>
+
+      <div class="option-group">
+        <label>Output Directory</label>
+        <div class="folder-picker">
+          <input type="text" id="outputDir" placeholder="Default (from Settings)" readonly>
+          <button class="browse-btn" id="browseOutputBtn">📁 Browse…</button>
+        </div>
+      </div>
+
+      <div class="option-group">
+        <label>Speaker Diarization</label>
+        <div class="toggle-row">
+          <label class="switch">
+            <input type="checkbox" id="diarize">
+            <span class="slider"></span>
+          </label>
+          <span id="diarizeLabel">Off</span>
+        </div>
+      </div>
+
+      <div class="option-group">
+        <label>Output Format</label>
+        <div class="format-checks">
+          <label class="format-check">
+            <input type="checkbox" id="fmtTxt" checked>
+            TXT
+          </label>
+          <label class="format-check">
+            <input type="checkbox" id="fmtJson">
+            JSON
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action -->
+  <button id="transcribeBtn" disabled>Transcribe</button>
+
+  <!-- Progress -->
+  <div class="card hidden" id="progressSection">
+    <p class="section-title" style="margin-bottom:12px">Progress</p>
+    <div class="progress-track">
+      <div id="progressFill"></div>
+    </div>
+    <p id="progressMsg"></p>
+  </div>
+
+  <!-- Result -->
+  <div class="card hidden" id="resultSection">
+    <h2>Transcript</h2>
+    <textarea id="resultText" readonly></textarea>
+    <div class="file-paths">
+      <span class="file-path-label hidden" id="txtPathLabel"></span>
+      <span class="file-path-label hidden" id="jsonPathLabel"></span>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div class="card hidden" id="errorSection">
+    <h2>Error</h2>
+    <div id="errorMsg"></div>
+  </div>
+
+</main>
+
+<script>
+  // ── File selection ──────────────────────────────────────────
+  const dropZone      = document.getElementById('dropZone');
+  const dropZoneLabel = document.getElementById('dropZoneLabel');
+  const dropZoneHint  = document.getElementById('dropZoneHint');
+  const transcribeBtn = document.getElementById('transcribeBtn');
+  let selectedFile    = null;
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm';
+
+  function handleFile(f) {
+    if (!f) return;
+    selectedFile = f;
+    dropZone.classList.add('has-file');
+    dropZoneLabel.textContent = f.name;
+    dropZoneHint.textContent  = (f.size / (1024 * 1024)).toFixed(1) + ' MB';
+    transcribeBtn.disabled = false;
+  }
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  // ── Folder browser ──────────────────────────────────────────
+  async function browseFolder(targetInputId) {
+    const btn = document.querySelector(`[data-browse="${targetInputId}"]`) ||
+                document.getElementById('browseOutputBtn');
+    try {
+      const res  = await fetch('/browse-folder');
+      const data = await res.json();
+      if (data.path) {
+        document.getElementById(targetInputId).value = data.path.replace(/\/$/, '');
+      }
+    } catch (err) {
+      console.error('Folder browse failed', err);
+    }
+  }
+
+  document.getElementById('browseOutputBtn').addEventListener('click', () => browseFolder('outputDir'));
+  document.getElementById('browseSettingsBtn').addEventListener('click', () => browseFolder('settingsOutputDir'));
+
+  // ── Diarize toggle label ────────────────────────────────────
+  const diarizeCheck = document.getElementById('diarize');
+  const diarizeLabel = document.getElementById('diarizeLabel');
+  diarizeCheck.addEventListener('change', () => {
+    diarizeLabel.textContent = diarizeCheck.checked ? 'On' : 'Off';
+  });
+
+  // ── Format checkboxes — enforce at least one ────────────────
+  const fmtTxt  = document.getElementById('fmtTxt');
+  const fmtJson = document.getElementById('fmtJson');
+  function enforceFmtSelection() {
+    if (!fmtTxt.checked && !fmtJson.checked) {
+      // Re-check whichever was just unchecked
+      this.checked = true;
+    }
+  }
+  fmtTxt.addEventListener('change',  enforceFmtSelection);
+  fmtJson.addEventListener('change', enforceFmtSelection);
+
+  // ── Settings modal ──────────────────────────────────────────
+  const settingsModal = document.getElementById('settingsModal');
+
+  document.getElementById('settingsBtn').addEventListener('click', async () => {
+    try {
+      const res  = await fetch('/settings');
+      const data = await res.json();
+      document.getElementById('settingsToken').value   = '';
+      document.getElementById('settingsTokenHint').textContent = data.hf_token_set
+        ? 'Token on file: ' + data.hf_token_masked
+        : 'No token set — required for speaker diarization.';
+      document.getElementById('settingsOutputDir').value = data.default_output_dir || '';
+    } catch (err) {
+      document.getElementById('settingsTokenHint').textContent = 'Could not load settings.';
+    }
+    settingsModal.classList.remove('hidden');
+  });
+
+  document.getElementById('settingsCancel').addEventListener('click', () => {
+    settingsModal.classList.add('hidden');
+  });
+
+  settingsModal.addEventListener('click', e => {
+    if (e.target === settingsModal) settingsModal.classList.add('hidden');
+  });
+
+  document.getElementById('settingsSave').addEventListener('click', async () => {
+    const body = {
+      hf_token:           document.getElementById('settingsToken').value.trim(),
+      default_output_dir: document.getElementById('settingsOutputDir').value.trim(),
+    };
+    try {
+      await fetch('/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      console.error('Failed to save settings', err);
+    }
+    settingsModal.classList.add('hidden');
+  });
+
+  // ── UI helpers ──────────────────────────────────────────────
+  function setProgress(percent, message) {
+    document.getElementById('progressFill').style.width = percent + '%';
+    document.getElementById('progressMsg').textContent  = message;
+  }
+
+  function showSection(...names) {
+    ['progressSection', 'resultSection', 'errorSection'].forEach(id => {
+      document.getElementById(id).classList.add('hidden');
+    });
+    names.forEach(name => document.getElementById(name).classList.remove('hidden'));
+  }
+
+  function showError(msg) {
+    let display = msg;
+    if (msg && msg.toLowerCase().includes('huggingface token')) {
+      display += '\n\n→ Use the Settings button (top-right) to set your HF Token.';
+    }
+    document.getElementById('errorMsg').textContent = display;
+    showSection('errorSection');
+    transcribeBtn.disabled = false;
+  }
+
+  // ── Transcribe ──────────────────────────────────────────────
+  transcribeBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+
+    transcribeBtn.disabled = true;
+    showSection('progressSection');
+    setProgress(0, 'Uploading…');
+
+    // Hide result/error labels from previous run
+    document.getElementById('txtPathLabel').classList.add('hidden');
+    document.getElementById('jsonPathLabel').classList.add('hidden');
+    document.getElementById('resultText').value = '';
+
+    const form = new FormData();
+    form.append('file',       selectedFile);
+    form.append('quality',    document.getElementById('quality').value);
+    form.append('diarize',    diarizeCheck.checked ? 'true' : 'false');
+    form.append('output_dir', document.getElementById('outputDir').value.trim());
+    form.append('save_txt',   fmtTxt.checked  ? 'true' : 'false');
+    form.append('save_json',  fmtJson.checked ? 'true' : 'false');
+
+    let jobId;
+    try {
+      const res = await fetch('/transcribe', { method: 'POST', body: form });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { msg = JSON.parse(text).detail || text; } catch (_) {}
+        showError(msg);
+        return;
+      }
+      const data = await res.json();
+      jobId = data.job_id;
+    } catch (err) {
+      showError('Upload failed: ' + err.message);
+      return;
+    }
+
+    setProgress(1, 'Job queued…');
+    listenToJob(jobId);
+  });
+
+  // ── SSE listener ────────────────────────────────────────────
+  function listenToJob(jobId) {
+    const evtSource = new EventSource('/jobs/' + jobId + '/stream');
+
+    evtSource.addEventListener('progress', e => {
+      const d = JSON.parse(e.data);
+      setProgress(d.percent, d.message);
+    });
+
+    evtSource.addEventListener('done', e => {
+      const d = JSON.parse(e.data);
+      setProgress(100, d.message);
+      evtSource.close();
+      fetchResult(jobId);
+    });
+
+    evtSource.addEventListener('error', e => {
+      evtSource.close();
+      let msg = 'An unknown error occurred.';
+      if (e.data) {
+        try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
+      }
+      showError(msg);
+    });
+
+    evtSource.addEventListener('close', () => evtSource.close());
+  }
+
+  async function fetchResult(jobId) {
+    try {
+      const res = await fetch('/jobs/' + jobId + '/result');
+      if (!res.ok) {
+        showError('Failed to retrieve result (status ' + res.status + ').');
+        return;
+      }
+      const data = await res.json();
+
+      document.getElementById('resultText').value = data.text || '';
+
+      const txtLabel  = document.getElementById('txtPathLabel');
+      const jsonLabel = document.getElementById('jsonPathLabel');
+
+      if (data.txt_path) {
+        txtLabel.textContent = data.txt_path;
+        txtLabel.classList.remove('hidden');
+      }
+      if (data.json_path) {
+        jsonLabel.textContent = data.json_path;
+        jsonLabel.classList.remove('hidden');
+      }
+
+      showSection('progressSection', 'resultSection');
+      transcribeBtn.disabled = false;
+    } catch (err) {
+      showError('Could not fetch result: ' + err.message);
+    }
+  }
+</script>
+</body>
+</html>

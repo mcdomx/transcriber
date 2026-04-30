@@ -161,7 +161,7 @@ def format_diarized_output(aligned_segments, audio_filename, whisper_model_name)
     return formatted_text, json_string
 
 
-def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=False, hf_token=None):
+def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=False, hf_token=None, progress_callback=None, save_txt=True, save_json=True):
     """
     Transcribe an audio file to text using OpenAI Whisper, with optional speaker diarization.
     Supported file types: mp3, mp4, mpeg, mpga, m4a, wav, and webm
@@ -174,9 +174,12 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
         diarize (bool): If True, run speaker diarization and include speaker labels in output.
         hf_token (str, optional): HuggingFace API token for diarization. Falls back to
                                   HF_TOKEN env var or .env file.
+        save_txt (bool): If True, write the .txt transcript file.
+        save_json (bool): If True, write the .json output file.
 
     Returns:
-        str: Path to the created transcription .txt file
+        tuple[str, str | None, str | None]: (text_content, txt_path, json_path)
+            txt_path and json_path are None when the respective file was not saved.
 
     Raises:
         FileNotFoundError: If the audio file doesn't exist
@@ -204,45 +207,77 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
     base_name = _path.stem
     output_path = output_directory / f"{base_name}-transcription.txt"
 
+    def _emit(msg, pct):
+        if progress_callback:
+            progress_callback(msg, pct)
+        else:
+            print(msg, flush=True)
+
     try:
         # Resolve whisper model name
         quality_map = {1: "tiny", 2: "base", 3: "small", 4: "medium", 5: "large"}
         model_name = quality_map.get(convert_quality, "base")
 
-        print(f"Loading Whisper model '{model_name}'...", end="", flush=True)
+        _emit(f"Loading Whisper model '{model_name}'...", 5)
         model = whisper.load_model(model_name)
-        print("DONE")
+        _emit(f"Whisper model '{model_name}' loaded.", 20)
 
-        print(f"Transcribing {_path.name}...", end="", flush=True)
+        _emit(f"Transcribing {_path.name}...", 25)
         result = model.transcribe(str(_path), fp16=False)
-        print("DONE")
+        _emit("Transcription complete.", 70)
 
         if diarize:
             token = load_hf_token(hf_token)
 
-            print("Running speaker diarization...", end="", flush=True)
+            _emit("Running speaker diarization...", 72)
             turns = run_diarization(str(_path), token)
-            print("DONE")
+            _emit("Speaker diarization complete.", 90)
 
             aligned = align_speakers(result["segments"], turns)
             formatted_text, json_string = format_diarized_output(aligned, _path.name, model_name)
 
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(formatted_text)
+            saved_txt_path = None
+            saved_json_path = None
 
-            json_path = output_directory / f"{base_name}-transcription.json"
-            with open(json_path, 'w', encoding='utf-8') as f:
-                f.write(json_string)
+            if save_txt:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(formatted_text)
+                saved_txt_path = str(output_path)
+                _emit(f"Saved: {output_path}", 95)
 
-            print(f"Diarized transcription saved to: {output_path}")
-            print(f"Structured JSON saved to: {json_path}")
+            if save_json:
+                json_path = output_directory / f"{base_name}-transcription.json"
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    f.write(json_string)
+                saved_json_path = str(json_path)
+                _emit(f"Saved JSON: {json_path}", 96 if save_txt else 95)
+
+            _emit("Done.", 100)
+            return formatted_text, saved_txt_path, saved_json_path
+
         else:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(result["text"].strip())
+            plain_text = result["text"].strip()
+            saved_txt_path = None
+            saved_json_path = None
 
-        print(f"Transcription completed successfully! Quality: {convert_quality}")
+            if save_txt:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(plain_text)
+                saved_txt_path = str(output_path)
 
-        return str(output_path)
+            if save_json:
+                json_data = {
+                    "audio_file": _path.name,
+                    "whisper_model": model_name,
+                    "text": plain_text,
+                }
+                json_path = output_directory / f"{base_name}-transcription.json"
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    f.write(json.dumps(json_data, indent=2))
+                saved_json_path = str(json_path)
+
+            _emit("Done.", 100)
+            return plain_text, saved_txt_path, saved_json_path
 
     except Exception as e:
         raise Exception(f"Transcription failed: {str(e)}") from e
@@ -261,8 +296,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        transcription_file = transcribe_mp3(**vars(args))
-        print(f"Transcription saved to: {transcription_file}")
+        _, txt_path, _ = transcribe_mp3(**vars(args))
+        if txt_path:
+            print(f"Transcription saved to: {txt_path}")
     except Exception as e:
         print(f"Error: {e}")
 

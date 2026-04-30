@@ -1,6 +1,6 @@
 # Transcriber
 
-A command-line tool for transcribing audio files to text using OpenAI Whisper, with optional speaker diarization via pyannote.audio.
+A tool for transcribing audio files to text using OpenAI Whisper, with optional speaker diarization via pyannote.audio. Includes both a command-line interface and a browser-based web UI.
 
 ## Supported Formats
 
@@ -13,7 +13,37 @@ pip install pipenv
 pipenv install
 ```
 
-## Usage
+## Web UI
+
+### Starting the server
+
+**Option 1 — Double-click** `start_server.command` in Finder. A Terminal window will open and the server will start.
+
+**Option 2 — Terminal:**
+```bash
+pipenv run python app.py
+```
+
+Then open **http://127.0.0.1:8000** in your browser.
+
+### Features
+
+- Drag-and-drop (or click-to-browse) audio file upload
+- Model quality selector and speaker diarization toggle
+- Configurable output directory per job
+- Real-time progress bar during transcription
+- Transcript displayed in the browser when complete, with saved file paths shown
+- Settings panel (gear icon) to set your HuggingFace token and default output directory
+
+### Settings
+
+Click the **Settings** button in the top-right corner to:
+- Set or update your HuggingFace API token (required for speaker diarization)
+- Set a default output directory for all transcription jobs
+
+Settings are saved to the local `.env` file.
+
+## Command-Line Usage
 
 ```bash
 pipenv run python transcriber.py <audio_file> [-o OUTPUT_DIR] [-q QUALITY] [-d] [--hf-token TOKEN]
@@ -71,18 +101,20 @@ Diarization uses the `pyannote/speaker-diarization-3.1` model, which requires ac
 
 ### Providing the token
 
-**Option 1 — `.env` file** (recommended for local use):
+**Option 1 — Web UI Settings panel** (recommended): click the Settings button after starting the server.
+
+**Option 2 — `.env` file:**
 ```
 HF_TOKEN=hf_xxxxxxxxxxxx
 ```
 
-**Option 2 — environment variable:**
+**Option 3 — environment variable:**
 ```bash
 export HF_TOKEN=hf_xxxxxxxxxxxx
 pipenv run python transcriber.py recording.m4a -d
 ```
 
-**Option 3 — CLI flag:**
+**Option 4 — CLI flag:**
 ```bash
 pipenv run python transcriber.py recording.m4a -d --hf-token hf_xxxxxxxxxxxx
 ```
@@ -92,3 +124,4 @@ pipenv run python transcriber.py recording.m4a -d --hf-token hf_xxxxxxxxxxxx
 - Python 3.9+
 - OpenAI Whisper
 - pyannote.audio 3.1+ (for diarization)
+- ffmpeg (required for diarization of non-WAV files — `brew install ffmpeg`)
