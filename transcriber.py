@@ -161,7 +161,7 @@ def format_diarized_output(aligned_segments, audio_filename, whisper_model_name)
     return formatted_text, json_string
 
 
-def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=False, hf_token=None, progress_callback=None, save_txt=True, save_json=True):
+def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=False, hf_token=None, progress_callback=None, save_txt=True, save_json=True, original_filename=None):
     """
     Transcribe an audio file to text using OpenAI Whisper, with optional speaker diarization.
     Supported file types: mp3, mp4, mpeg, mpga, m4a, wav, and webm
@@ -176,6 +176,9 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
                                   HF_TOKEN env var or .env file.
         save_txt (bool): If True, write the .txt transcript file.
         save_json (bool): If True, write the .json output file.
+        original_filename (str, optional): Name to derive the output filename from, used when
+                                           file_path points to a temp file (e.g. an upload) whose
+                                           name shouldn't appear in the output filename.
 
     Returns:
         tuple[str, str | None, str | None]: (text_content, txt_path, json_path)
@@ -204,7 +207,7 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
         output_directory = Path(output_dir)
         output_directory.mkdir(parents=True, exist_ok=True)
 
-    base_name = _path.stem
+    base_name = Path(original_filename).stem if original_filename else _path.stem
     output_path = output_directory / f"{base_name}-transcription.txt"
 
     def _emit(msg, pct):

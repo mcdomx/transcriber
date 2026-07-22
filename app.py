@@ -55,7 +55,7 @@ threading.Thread(target=_cleanup_daemon, daemon=True).start()
 # Worker
 # ---------------------------------------------------------------------------
 
-def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, quality: int, diarize: bool, save_txt: bool, save_json: bool):
+def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, quality: int, diarize: bool, save_txt: bool, save_json: bool, original_filename: str):
     from transcriber import transcribe_mp3
 
     job = jobs[job_id]
@@ -73,6 +73,7 @@ def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, qualit
             progress_callback=progress_callback,
             save_txt=save_txt,
             save_json=save_json,
+            original_filename=original_filename,
         )
 
         job["text"] = text_content
@@ -193,7 +194,7 @@ async def transcribe(
     if not save_txt_bool and not save_json_bool:
         save_txt_bool = True
 
-    executor.submit(_run_transcription_job, job_id, tmp.name, resolved_output_dir, quality, diarize_bool, save_txt_bool, save_json_bool)
+    executor.submit(_run_transcription_job, job_id, tmp.name, resolved_output_dir, quality, diarize_bool, save_txt_bool, save_json_bool, file.filename)
 
     return JSONResponse({"job_id": job_id})
 
