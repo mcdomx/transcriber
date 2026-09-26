@@ -1,9 +1,12 @@
 import asyncio
+import atexit
 import json
 import os
 import queue
 import random
+import shutil
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -52,17 +55,52 @@ threading.Thread(target=_cleanup_daemon, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
+# Completion notification
+# ---------------------------------------------------------------------------
+
+# terminal-notifier processes still waiting for a click; ended when the app quits
+_notifier_procs: list = []
+atexit.register(lambda: [p.terminate() for p in list(_notifier_procs)])
+
+
+def _notify_complete(output_dir: str, filename: str) -> None:
+    """Show a macOS notification; 'Open Folder' (or clicking it) opens output_dir."""
+    # Apps launched from Finder may not have Homebrew on PATH
+    search_path = os.pathsep.join([os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
+    notifier = shutil.which("terminal-notifier", path=search_path)
+    if not notifier:
+        print("terminal-notifier not found; skipping notification (brew install terminal-notifier)")
+        return
+
+    proc = subprocess.Popen(
+        [notifier, "-title", "Transcription complete", "-message", filename,
+         "-sound", "default", "-action", "Open Folder,Dismiss"],
+        stdout=subprocess.PIPE, text=True,
+    )
+    _notifier_procs.append(proc)
+    choice = proc.communicate()[0].strip()  # blocks until the user responds
+    _notifier_procs.remove(proc)
+
+    if choice in ("Open Folder", "@ACTIONCLICKED"):
+        subprocess.run(["open", output_dir])
+
+
+# ---------------------------------------------------------------------------
 # Worker
 # ---------------------------------------------------------------------------
 
 def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, quality: int, diarize: bool, save_txt: bool, save_json: bool, original_filename: str, delete_audio: bool):
-    from transcriber import transcribe_mp3
+    from transcriber import TranscriptionCancelled, transcribe_mp3
 
     job = jobs[job_id]
     job["status"] = "running"
 
-    def progress_callback(message: str, percent: int):
-        job["queue"].put({"type": "progress", "message": message, "percent": percent})
+    def progress_callback(step: str, status: str, fraction: Optional[float]) -> None:
+        # Stop at the next checkpoint; never once saving has begun, so no partial files
+        if job["cancel_requested"] and status != "done" and step != "save":
+            raise TranscriptionCancelled()
+        job["queue"].put({"type": "step", "step": step, "status": status,
+                          "fraction": fraction, "ts": time.time()})
 
     try:
         text_content, txt_path, json_path = transcribe_mp3(
@@ -81,6 +119,13 @@ def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, qualit
         job["json_path"] = json_path
         job["status"] = "done"
         job["queue"].put({"type": "done", "message": "Transcription complete.", "percent": 100})
+        threading.Thread(
+            target=_notify_complete, args=(output_dir, original_filename), daemon=True
+        ).start()
+
+    except TranscriptionCancelled:
+        job["status"] = "cancelled"
+        job["queue"].put({"type": "cancelled", "ts": time.time()})
 
     except Exception as e:
         error_msg = str(e)
@@ -182,6 +227,7 @@ async def transcribe(
             "text": None,
             "error": None,
             "temp_file": audio_path if is_temp else None,
+            "cancel_requested": False,
             "finished_at": None,
         }
 
@@ -226,6 +272,15 @@ async def stream_job(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job["cancel_requested"] = True
+    return JSONResponse({"ok": True})
 
 
 @app.get("/jobs/{job_id}/result")

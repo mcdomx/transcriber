@@ -32,8 +32,10 @@ The app runs a local server on a random free port (18001–18998) and displays i
 - Output directory is automatically set to the audio file's source folder (you can change it afterwards)
 - **Browse…** opens the native macOS folder dialog, starting in the current output folder
 - Model quality selector and speaker diarization toggle
-- Real-time progress bar during transcription
+- Step-by-step progress (upload, model load, transcription, speaker identification, save), each with its own progress bar and elapsed time
+- **Cancel** button to stop a running transcription (takes effect at the next progress checkpoint, usually within a few seconds)
 - Transcript displayed in the app when complete, with saved file paths shown
+- macOS notification when a transcription finishes, with an **Open Folder** button (requires `terminal-notifier`, see Requirements)
 - Settings panel (gear icon) to set your HuggingFace token and default output directory
 
 ### Settings
@@ -126,3 +128,9 @@ pipenv run python transcriber.py recording.m4a -d --hf-token hf_xxxxxxxxxxxx
 - OpenAI Whisper
 - pyannote.audio 3.1+ (for diarization)
 - ffmpeg (required for diarization of non-WAV files — `brew install ffmpeg`)
+- terminal-notifier (optional, for completion notifications). macOS only grants notification permission to apps in an Applications folder, so link it there after installing:
+  ```bash
+  brew install terminal-notifier
+  ln -s /opt/homebrew/opt/terminal-notifier/terminal-notifier.app ~/Applications/
+  ```
+  Allow notifications when prompted. To keep the notification (and its **Open Folder** button) on screen until you respond, set System Settings → Notifications → terminal-notifier → style to **Alerts**.
