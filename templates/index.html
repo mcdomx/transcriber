@@ -176,21 +176,51 @@
     #transcribeBtn:disabled { opacity: 0.45; cursor: not-allowed; }
 
     /* ── Progress ── */
-    #progressSection { display: flex; flex-direction: column; gap: 10px; }
+    #stepList { display: flex; flex-direction: column; gap: 12px; }
+    .step-label { font-size: 0.9rem; color: #5A6A78; margin-bottom: 4px; }
+    .step-row { display: flex; align-items: center; gap: 10px; }
     .progress-track {
+      flex: 1;
       height: 10px;
       background: #E0E8EE;
       border-radius: 99px;
       overflow: hidden;
     }
-    #progressFill {
+    .step-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--blue), var(--blue-dark));
+      background: var(--blue);
       border-radius: 99px;
       transition: width 0.4s ease;
     }
-    #progressMsg { font-size: 0.9rem; color: #5A6A78; min-height: 1.2em; }
+    /* Running step with no measurable progress: sliding blue segment */
+    .step-fill.indeterminate { width: 30%; animation: step-slide 1.2s ease-in-out infinite; }
+    @keyframes step-slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+    .step-fill.done { width: 100%; background: var(--green); animation: none; margin-left: 0; }
+    .step-fill.failed { width: 100%; background: var(--red); animation: none; margin-left: 0; }
+    .step-failed .step-label, .step-failed .step-time { color: var(--red); }
+    .step-fill.cancelled { width: 100%; background: var(--orange); animation: none; margin-left: 0; }
+    .step-cancelled .step-label, .step-cancelled .step-time { color: var(--orange); }
+    .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    #cancelBtn {
+      padding: 4px 14px;
+      background: var(--white);
+      color: var(--red);
+      border: 1px solid var(--red);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    #cancelBtn:hover:not(:disabled) { background: #FBEDED; }
+    #cancelBtn:disabled { opacity: 0.6; cursor: default; }
+    #cancelNote { font-size: 0.9rem; color: var(--orange); margin-top: 12px; }
+    .step-time {
+      min-width: 3.5em;
+      text-align: right;
+      font-size: 0.85rem;
+      font-variant-numeric: tabular-nums;
+      color: #5A6A78;
+    }
 
     /* ── Result ── */
     #resultSection { display: flex; flex-direction: column; gap: 12px; }
@@ -466,11 +496,12 @@
 
   <!-- Progress -->
   <div class="card hidden" id="progressSection">
-    <p class="section-title" style="margin-bottom:12px">Progress</p>
-    <div class="progress-track">
-      <div id="progressFill"></div>
+    <div class="progress-header">
+      <p class="section-title">Progress</p>
+      <button id="cancelBtn" class="hidden">Cancel</button>
     </div>
-    <p id="progressMsg"></p>
+    <div id="stepList"></div>
+    <p id="cancelNote" class="hidden">Transcription cancelled.</p>
   </div>
 
   <!-- Result -->
@@ -613,9 +644,118 @@
   });
 
   // ── UI helpers ──────────────────────────────────────────────
-  function setProgress(percent, message) {
-    document.getElementById('progressFill').style.width = percent + '%';
-    document.getElementById('progressMsg').textContent  = message;
+  // ── Step progress ───────────────────────────────────────────
+  const STEP_LABELS = {
+    upload:     'Upload file',
+    load_model: 'Load Whisper model',
+    transcribe: 'Transcribe audio',
+    diarize:    'Identify speakers',
+    save:       'Save output',
+  };
+  let steps     = {};
+  let stepTimer = null;
+
+  function formatTime(seconds) {
+    const s = Math.max(0, Math.floor(seconds));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function initSteps(ids) {
+    const list = document.getElementById('stepList');
+    list.innerHTML = '';
+    steps = {};
+    ids.forEach(id => {
+      const item = document.createElement('div');
+      item.innerHTML =
+        '<div class="step-label"></div>' +
+        '<div class="step-row">' +
+          '<div class="progress-track"><div class="step-fill"></div></div>' +
+          '<span class="step-time"></span>' +
+        '</div>';
+      item.querySelector('.step-label').textContent = STEP_LABELS[id];
+      list.appendChild(item);
+      steps[id] = {
+        item:  item,
+        fill:  item.querySelector('.step-fill'),
+        time:  item.querySelector('.step-time'),
+        start: null,
+        end:   null,
+      };
+    });
+    clearInterval(stepTimer);
+    stepTimer = setInterval(tickSteps, 250);
+  }
+
+  // Refresh the elapsed time of running steps (timestamps are epoch seconds)
+  function tickSteps() {
+    const now = Date.now() / 1000;
+    Object.values(steps).forEach(s => {
+      if (s.start !== null && s.end === null) s.time.textContent = formatTime(now - s.start);
+    });
+  }
+
+  function stopSteps() {
+    clearInterval(stepTimer);
+  }
+
+  // Stop whichever step was running and mark it 'failed' or 'cancelled'
+  function endRunningStep(outcome) {
+    const now = Date.now() / 1000;
+    const running = Object.values(steps).find(s => s.start !== null && s.end === null);
+    if (!running) return;
+    running.end = now;
+    running.fill.classList.remove('indeterminate');
+    running.fill.style.width = '';
+    running.fill.classList.add(outcome);
+    running.item.classList.add('step-' + outcome);
+    running.time.textContent = formatTime(now - running.start);
+  }
+
+  // ── Cancel ──────────────────────────────────────────────────
+  const cancelBtn = document.getElementById('cancelBtn');
+  let currentJobId = null;
+  let uploadAbort  = null;
+
+  function setCancelVisible(visible) {
+    cancelBtn.classList.toggle('hidden', !visible);
+    cancelBtn.disabled    = false;
+    cancelBtn.textContent = 'Cancel';
+  }
+
+  cancelBtn.addEventListener('click', async () => {
+    cancelBtn.disabled    = true;
+    cancelBtn.textContent = 'Cancelling…';
+    if (currentJobId) {
+      await fetch('/jobs/' + currentJobId + '/cancel', { method: 'POST' });
+    } else if (uploadAbort) {
+      uploadAbort.abort();
+    }
+  });
+
+  function showCancelled() {
+    stopSteps();
+    endRunningStep('cancelled');
+    setCancelVisible(false);
+    document.getElementById('cancelNote').classList.remove('hidden');
+    transcribeBtn.disabled = false;
+  }
+
+  function updateStep(id, status, fraction, ts) {
+    const s = steps[id];
+    if (!s) return;
+    if (status === 'start') {
+      s.start = ts;
+      s.fill.classList.add('indeterminate');
+    } else if (status === 'progress') {
+      s.fill.classList.remove('indeterminate');
+      s.fill.style.width = (fraction * 100) + '%';
+    } else if (status === 'done') {
+      s.end = ts;
+      s.fill.classList.remove('indeterminate');
+      s.fill.style.width = '';
+      s.fill.classList.add('done');
+      s.time.textContent = formatTime(s.end - s.start);
+    }
   }
 
   function showSection(...names) {
@@ -631,7 +771,15 @@
       display += '\n\n→ Use the Settings button (top-right) to set your HF Token.';
     }
     document.getElementById('errorMsg').textContent = display;
-    showSection('errorSection');
+    stopSteps();
+    const anyStarted = Object.values(steps).some(s => s.start !== null);
+    endRunningStep('failed');
+    setCancelVisible(false);
+    if (anyStarted) {
+      showSection('progressSection', 'errorSection');
+    } else {
+      showSection('errorSection');
+    }
     transcribeBtn.disabled = false;
   }
 
@@ -640,8 +788,20 @@
     if (!selectedFile) return;
 
     transcribeBtn.disabled = true;
+    const uploading = typeof selectedFile !== 'string';
+    initSteps([
+      ...(uploading ? ['upload'] : []),
+      'load_model',
+      'transcribe',
+      ...(diarizeCheck.checked ? ['diarize'] : []),
+      'save',
+    ]);
     showSection('progressSection');
-    setProgress(0, 'Uploading…');
+    document.getElementById('cancelNote').classList.add('hidden');
+    currentJobId = null;
+    uploadAbort  = new AbortController();
+    setCancelVisible(true);
+    if (uploading) updateStep('upload', 'start', null, Date.now() / 1000);
 
     // Hide result/error labels from previous run
     document.getElementById('txtPathLabel').classList.add('hidden');
@@ -649,10 +809,10 @@
     document.getElementById('resultText').value = '';
 
     const form = new FormData();
-    if (typeof selectedFile === 'string') {
-      form.append('source_path', selectedFile);
-    } else {
+    if (uploading) {
       form.append('file', selectedFile);
+    } else {
+      form.append('source_path', selectedFile);
     }
     form.append('quality',    document.getElementById('quality').value);
     form.append('diarize',    diarizeCheck.checked ? 'true' : 'false');
@@ -662,7 +822,7 @@
 
     let jobId;
     try {
-      const res = await fetch('/transcribe', { method: 'POST', body: form });
+      const res = await fetch('/transcribe', { method: 'POST', body: form, signal: uploadAbort.signal });
       if (!res.ok) {
         const text = await res.text();
         let msg = text;
@@ -673,11 +833,18 @@
       const data = await res.json();
       jobId = data.job_id;
     } catch (err) {
-      showError('Upload failed: ' + err.message);
+      if (err.name === 'AbortError') {
+        showCancelled();
+      } else {
+        showError('Upload failed: ' + err.message);
+      }
       return;
     }
 
-    setProgress(1, 'Job queued…');
+    if (uploading) updateStep('upload', 'done', null, Date.now() / 1000);
+    currentJobId = jobId;
+    // Cancel clicked while the request was finishing: forward it to the new job
+    if (cancelBtn.disabled) fetch('/jobs/' + jobId + '/cancel', { method: 'POST' });
     listenToJob(jobId);
   });
 
@@ -685,14 +852,19 @@
   function listenToJob(jobId) {
     const evtSource = new EventSource('/jobs/' + jobId + '/stream');
 
-    evtSource.addEventListener('progress', e => {
+    evtSource.addEventListener('step', e => {
       const d = JSON.parse(e.data);
-      setProgress(d.percent, d.message);
+      updateStep(d.step, d.status, d.fraction, d.ts);
     });
 
-    evtSource.addEventListener('done', e => {
-      const d = JSON.parse(e.data);
-      setProgress(100, d.message);
+    evtSource.addEventListener('cancelled', () => {
+      evtSource.close();
+      showCancelled();
+    });
+
+    evtSource.addEventListener('done', () => {
+      stopSteps();
+      setCancelVisible(false);
       evtSource.close();
       fetchResult(jobId);
     });

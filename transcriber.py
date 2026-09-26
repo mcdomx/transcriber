@@ -1,9 +1,40 @@
 import os
+import sys
 import json
+import threading
+import types
 from pathlib import Path
+from typing import Callable, Optional
 import argparse
+import tqdm
 import whisper
 from dotenv import load_dotenv
+
+
+class TranscriptionCancelled(Exception):
+    """Raised from a progress callback to stop a transcription early."""
+
+
+# Whisper reports transcription progress through a tqdm bar. Swap in a subclass (for
+# whisper's transcribe module only) that forwards progress to a per-thread callback.
+_whisper_progress = threading.local()
+
+
+class _WhisperProgressBar(tqdm.tqdm):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._frames_done = 0
+
+    def update(self, n: float = 1) -> Optional[bool]:
+        # Track frames ourselves: a disabled tqdm bar doesn't update its own counter
+        self._frames_done += n
+        callback = getattr(_whisper_progress, "callback", None)
+        if callback and self.total:
+            callback(min(self._frames_done / self.total, 1.0))
+        return super().update(n)
+
+
+sys.modules["whisper.transcribe"].tqdm = types.SimpleNamespace(tqdm=_WhisperProgressBar)
 
 
 def load_hf_token(cli_token=None):
@@ -32,13 +63,14 @@ def load_hf_token(cli_token=None):
     )
 
 
-def run_diarization(audio_path, hf_token):
+def run_diarization(audio_path, hf_token, progress: Optional[Callable[[float], None]] = None):
     """
     Run speaker diarization on an audio file using pyannote.audio.
 
     Args:
         audio_path (str): Path to the audio file
         hf_token (str): HuggingFace API token
+        progress (callable, optional): Called with the fraction complete (0.0-1.0)
 
     Returns:
         list[dict]: Speaker turns as [{"start": float, "end": float, "speaker": str}, ...]
@@ -76,8 +108,14 @@ def run_diarization(audio_path, hf_token):
         diarize_path = str(audio_path)
         tmp = None
 
+    # The slow phases are segmentation then embeddings; count each as half the work
+    def _hook(step_name, step_artifact, file=None, total=None, completed=None) -> None:
+        if progress and total and step_name in ("segmentation", "embeddings"):
+            phase = 0 if step_name == "segmentation" else 1
+            progress((phase + min(completed / total, 1.0)) / 2)
+
     try:
-        diarization = pipeline(diarize_path)
+        diarization = pipeline(diarize_path, hook=_hook)
     finally:
         if tmp is not None:
             os.unlink(tmp.name)
@@ -210,32 +248,48 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
     base_name = Path(original_filename).stem if original_filename else _path.stem
     output_path = output_directory / f"{base_name}-transcription.txt"
 
-    def _emit(msg, pct):
+    # progress_callback(step, status, fraction): status is "start", "progress" or "done";
+    # fraction (0.0-1.0) is only given with "progress". The callback may raise
+    # TranscriptionCancelled to stop the job.
+    step_messages = {
+        "load_model": "Loading Whisper model...",
+        "transcribe": "Transcribing...",
+        "diarize": "Running speaker diarization...",
+        "save": "Saving output...",
+    }
+
+    def _emit(step: str, status: str, fraction: Optional[float] = None) -> None:
         if progress_callback:
-            progress_callback(msg, pct)
-        else:
-            print(msg, flush=True)
+            progress_callback(step, status, fraction)
+        elif status == "start":
+            print(step_messages[step], flush=True)
 
     try:
         # Resolve whisper model name
         quality_map = {1: "tiny", 2: "base", 3: "small", 4: "medium", 5: "large"}
         model_name = quality_map.get(convert_quality, "base")
 
-        _emit(f"Loading Whisper model '{model_name}'...", 5)
+        _emit("load_model", "start")
         model = whisper.load_model(model_name)
-        _emit(f"Whisper model '{model_name}' loaded.", 20)
+        _emit("load_model", "done")
 
-        _emit(f"Transcribing {_path.name}...", 25)
-        result = model.transcribe(str(_path), fp16=False)
-        _emit("Transcription complete.", 70)
+        _emit("transcribe", "start")
+        _whisper_progress.callback = lambda f: _emit("transcribe", "progress", f)
+        try:
+            result = model.transcribe(str(_path), fp16=False)
+        finally:
+            _whisper_progress.callback = None
+        _emit("transcribe", "done")
 
         if diarize:
+            _emit("diarize", "start")
             token = load_hf_token(hf_token)
+            turns = run_diarization(
+                str(_path), token, progress=lambda f: _emit("diarize", "progress", f)
+            )
+            _emit("diarize", "done")
 
-            _emit("Running speaker diarization...", 72)
-            turns = run_diarization(str(_path), token)
-            _emit("Speaker diarization complete.", 90)
-
+            _emit("save", "start")
             aligned = align_speakers(result["segments"], turns)
             formatted_text, json_string = format_diarized_output(aligned, _path.name, model_name)
 
@@ -246,19 +300,18 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
                 with open(output_path, 'w', encoding='utf-8') as f:
                     f.write(formatted_text)
                 saved_txt_path = str(output_path)
-                _emit(f"Saved: {output_path}", 95)
 
             if save_json:
                 json_path = output_directory / f"{base_name}-transcription.json"
                 with open(json_path, 'w', encoding='utf-8') as f:
                     f.write(json_string)
                 saved_json_path = str(json_path)
-                _emit(f"Saved JSON: {json_path}", 96 if save_txt else 95)
 
-            _emit("Done.", 100)
+            _emit("save", "done")
             return formatted_text, saved_txt_path, saved_json_path
 
         else:
+            _emit("save", "start")
             plain_text = result["text"].strip()
             saved_txt_path = None
             saved_json_path = None
@@ -279,9 +332,11 @@ def transcribe_mp3(file_path, output_dir=None, convert_quality=None, diarize=Fal
                     f.write(json.dumps(json_data, indent=2))
                 saved_json_path = str(json_path)
 
-            _emit("Done.", 100)
+            _emit("save", "done")
             return plain_text, saved_txt_path, saved_json_path
 
+    except TranscriptionCancelled:
+        raise
     except Exception as e:
         raise Exception(f"Transcription failed: {str(e)}") from e
 
