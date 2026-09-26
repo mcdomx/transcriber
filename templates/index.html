@@ -497,11 +497,7 @@
   const dropZoneLabel = document.getElementById('dropZoneLabel');
   const dropZoneHint  = document.getElementById('dropZoneHint');
   const transcribeBtn = document.getElementById('transcribeBtn');
-  let selectedFile    = null;
-
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = '.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm';
+  let selectedFile    = null;  // dropped File, or local path string when chosen by clicking
 
   function handleFile(f) {
     if (!f) return;
@@ -512,8 +508,20 @@
     transcribeBtn.disabled = false;
   }
 
-  dropZone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+  function handlePath(path) {
+    if (!path) return;
+    selectedFile = path;
+    const slash = path.lastIndexOf('/');
+    dropZone.classList.add('has-file');
+    dropZoneLabel.textContent = path.slice(slash + 1);
+    dropZoneHint.textContent  = path.slice(0, slash);
+    document.getElementById('outputDir').value = path.slice(0, slash);
+    transcribeBtn.disabled = false;
+  }
+
+  dropZone.addEventListener('click', async () => {
+    handlePath(await window.pywebview.api.choose_audio_file());
+  });
 
   dropZone.addEventListener('dragover', e => {
     e.preventDefault();
@@ -528,13 +536,11 @@
 
   // ── Folder browser ──────────────────────────────────────────
   async function browseFolder(targetInputId) {
-    const btn = document.querySelector(`[data-browse="${targetInputId}"]`) ||
-                document.getElementById('browseOutputBtn');
+    const input = document.getElementById(targetInputId);
     try {
-      const res  = await fetch('/browse-folder');
-      const data = await res.json();
-      if (data.path) {
-        document.getElementById(targetInputId).value = data.path.replace(/\/$/, '');
+      const path = await window.pywebview.api.browse_folder(input.value.trim());
+      if (path) {
+        input.value = path.replace(/\/$/, '');
       }
     } catch (err) {
       console.error('Folder browse failed', err);
@@ -643,7 +649,11 @@
     document.getElementById('resultText').value = '';
 
     const form = new FormData();
-    form.append('file',       selectedFile);
+    if (typeof selectedFile === 'string') {
+      form.append('source_path', selectedFile);
+    } else {
+      form.append('file', selectedFile);
+    }
     form.append('quality',    document.getElementById('quality').value);
     form.append('diarize',    diarizeCheck.checked ? 'true' : 'false');
     form.append('output_dir', document.getElementById('outputDir').value.trim());

@@ -15,6 +15,7 @@ fastapi = "*"
 uvicorn = {extras = ["standard"], version = "*"}
 python-multipart = "*"
 aiofiles = "*"
+pywebview = "*"
 
 [dev-packages]
 
