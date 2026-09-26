@@ -8,9 +8,9 @@ import tempfile
 import threading
 import time
 import uuid
-import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional
 
 from dotenv import dotenv_values, load_dotenv, set_key
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -55,7 +55,7 @@ threading.Thread(target=_cleanup_daemon, daemon=True).start()
 # Worker
 # ---------------------------------------------------------------------------
 
-def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, quality: int, diarize: bool, save_txt: bool, save_json: bool, original_filename: str):
+def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, quality: int, diarize: bool, save_txt: bool, save_json: bool, original_filename: str, delete_audio: bool):
     from transcriber import transcribe_mp3
 
     job = jobs[job_id]
@@ -96,10 +96,11 @@ def _run_transcription_job(job_id: str, audio_path: str, output_dir: str, qualit
 
     finally:
         job["finished_at"] = time.time()
-        try:
-            os.unlink(audio_path)
-        except OSError:
-            pass
+        if delete_audio:
+            try:
+                os.unlink(audio_path)
+            except OSError:
+                pass
         job["queue"].put(None)  # sentinel — always last
 
 
@@ -112,49 +113,46 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/browse-folder")
-async def browse_folder():
-    """Open a native macOS folder picker and return the selected path."""
-    import subprocess
-    result = await asyncio.get_event_loop().run_in_executor(
-        None,
-        lambda: subprocess.run(
-            ["osascript", "-e",
-             'tell application "Finder" to set f to choose folder with prompt "Select Output Folder"\n'
-             'return POSIX path of f'],
-            capture_output=True, text=True,
-        )
-    )
-    path = result.stdout.strip()
-    if result.returncode != 0 or not path:
-        return JSONResponse({"path": ""})
-    return JSONResponse({"path": path})
-
-
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    source_path: str = Form(""),
     output_dir: str = Form(""),
     quality: int = Form(2),
     diarize: str = Form("false"),
     save_txt: str = Form("true"),
     save_json: str = Form("true"),
 ):
+    # Either an uploaded file or a local path picked in the native window
+    if source_path:
+        if not Path(source_path).is_file():
+            raise HTTPException(status_code=400, detail=f"File not found: {source_path}")
+        filename = Path(source_path).name
+    elif file is not None:
+        filename = file.filename
+    else:
+        raise HTTPException(status_code=400, detail="No file provided")
+
     # Validate file type
-    suffix = Path(file.filename).suffix.lower()
+    suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type '{suffix}'. Supported: {', '.join(sorted(SUPPORTED_SUFFIXES))}",
         )
 
-    # Save upload to a temp file using streaming chunks (handles large files)
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    try:
-        while chunk := await file.read(1024 * 1024):  # 1 MB chunks
-            tmp.write(chunk)
-    finally:
-        tmp.close()
+    if source_path:
+        audio_path = source_path
+    else:
+        # Save upload to a temp file using streaming chunks (handles large files)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        try:
+            while chunk := await file.read(1024 * 1024):  # 1 MB chunks
+                tmp.write(chunk)
+        finally:
+            tmp.close()
+        audio_path = tmp.name
+    is_temp = not source_path
 
     # Resolve output directory
     resolved_output_dir = output_dir.strip()
@@ -162,13 +160,14 @@ async def transcribe(
         load_dotenv(ENV_PATH, override=True)
         resolved_output_dir = os.environ.get(DEFAULT_OUTPUT_DIR_KEY, "").strip()
     if not resolved_output_dir:
-        resolved_output_dir = str(Path(tmp.name).parent)
+        resolved_output_dir = str(Path(audio_path).parent)
 
     # Pre-validate output directory
     try:
         Path(resolved_output_dir).mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        os.unlink(tmp.name)
+        if is_temp:
+            os.unlink(audio_path)
         raise HTTPException(status_code=400, detail=f"Cannot create output directory: {e}")
 
     job_id = str(uuid.uuid4())
@@ -182,7 +181,7 @@ async def transcribe(
             "json_path": None,
             "text": None,
             "error": None,
-            "temp_file": tmp.name,
+            "temp_file": audio_path if is_temp else None,
             "finished_at": None,
         }
 
@@ -194,7 +193,7 @@ async def transcribe(
     if not save_txt_bool and not save_json_bool:
         save_txt_bool = True
 
-    executor.submit(_run_transcription_job, job_id, tmp.name, resolved_output_dir, quality, diarize_bool, save_txt_bool, save_json_bool, file.filename)
+    executor.submit(_run_transcription_job, job_id, audio_path, resolved_output_dir, quality, diarize_bool, save_txt_bool, save_json_bool, filename, is_temp)
 
     return JSONResponse({"job_id": job_id})
 
@@ -282,16 +281,47 @@ async def save_settings(request: Request):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _open_browser_when_ready(url: str, timeout: float = 30.0):
-    port = int(url.split(":")[-1])
+def _wait_for_server(port: int, timeout: float = 30.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
+                return
         except OSError:
             time.sleep(0.2)
-    webbrowser.open_new(url)
+
+
+class _JsApi:
+    """Methods exposed to the page as window.pywebview.api.*"""
+
+    def browse_folder(self, start_dir: str = "") -> str:
+        import webview
+        result = webview.windows[0].create_file_dialog(
+            webview.FileDialog.FOLDER, directory=start_dir
+        )
+        return result[0] if result else ""
+
+    def choose_audio_file(self) -> str:
+        import webview
+        types = "Audio files (" + ";".join(f"*{s}" for s in sorted(SUPPORTED_SUFFIXES)) + ")"
+        result = webview.windows[0].create_file_dialog(
+            webview.FileDialog.OPEN, file_types=(types,)
+        )
+        return result[0] if result else ""
+
+
+def _on_drop(window, event: dict) -> None:
+    """Set the output directory to the dropped file's source folder."""
+    files = event["dataTransfer"].get("files", [])
+    path = files[0].get("pywebviewFullPath") if files else None
+    if path:
+        folder = json.dumps(os.path.dirname(path))
+        window.evaluate_js(f"document.getElementById('outputDir').value = {folder}")
+
+
+def _bind_drop_handler(window) -> None:
+    # A Python-side drop listener is what makes pywebview attach full file paths
+    window.dom.get_element("#dropZone").events.drop += lambda e: _on_drop(window, e)
 
 
 def _find_free_port(start: int = 18001, end: int = 18998) -> int:
@@ -309,8 +339,17 @@ def _find_free_port(start: int = 18001, end: int = 18998) -> int:
 
 if __name__ == "__main__":
     import uvicorn
+    import webview
     port = _find_free_port()
     url = f"http://127.0.0.1:{port}"
     print(f"Starting server on {url}")
-    threading.Thread(target=_open_browser_when_ready, args=(url,), daemon=True).start()
-    uvicorn.run("app:app", host="127.0.0.1", port=port, reload=False)
+    threading.Thread(
+        target=uvicorn.run,
+        args=("app:app",),
+        kwargs={"host": "127.0.0.1", "port": port, "reload": False},
+        daemon=True,
+    ).start()
+    _wait_for_server(port)
+    window = webview.create_window("Transcriber", url, js_api=_JsApi(), width=900, height=900)
+    window.events.loaded += _bind_drop_handler
+    webview.start()

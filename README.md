@@ -1,6 +1,6 @@
 # Transcriber
 
-A tool for transcribing audio files to text using OpenAI Whisper, with optional speaker diarization via pyannote.audio. Includes both a command-line interface and a browser-based web UI.
+A tool for transcribing audio files to text using OpenAI Whisper, with optional speaker diarization via pyannote.audio. Includes both a command-line interface and a desktop app (a native macOS window).
 
 ## Supported Formats
 
@@ -13,26 +13,27 @@ pip install pipenv
 pipenv install
 ```
 
-## Web UI
+## Desktop App
 
-### Starting the server
+### Starting the app
 
-**Option 1 — Double-click** `start_server.command` in Finder. A Terminal window will open and the server will start.
+**Option 1 — Double-click** `start_server.command` in Finder. A Terminal window will open and the Transcriber window will appear.
 
 **Option 2 — Terminal:**
 ```bash
 pipenv run python app.py
 ```
 
-Then open **http://127.0.0.1:8000** in your browser.
+The app runs a local server on a random free port (18001–18998) and displays it in a native macOS window via [pywebview](https://pywebview.flowrl.com/). Closing the window stops the app.
 
 ### Features
 
-- Drag-and-drop (or click-to-browse) audio file upload
+- Drag-and-drop an audio file onto the window, or click the drop zone to choose one with the macOS file dialog
+- Output directory is automatically set to the audio file's source folder (you can change it afterwards)
+- **Browse…** opens the native macOS folder dialog, starting in the current output folder
 - Model quality selector and speaker diarization toggle
-- Configurable output directory per job
 - Real-time progress bar during transcription
-- Transcript displayed in the browser when complete, with saved file paths shown
+- Transcript displayed in the app when complete, with saved file paths shown
 - Settings panel (gear icon) to set your HuggingFace token and default output directory
 
 ### Settings
